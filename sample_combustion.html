@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+
+body {
+	background-color: #36393E;
+	color: #FFFFFF;
+	font-size: 24px;
+	font-family: Arial;
+}
+
+.slidecontainer {
+	width: 200px;
+}
+
+.slider {
+	-webkit-appearance: none;
+	width: 400px;
+	height: 8px;
+	background: #AAAAAA;
+	outline: none;
+}
+
+.slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 16px;
+	height: 24px;
+	background: #CCCCCC;
+	cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+	width: 16px;
+	height: 24px;
+	background: #CCCCCC;
+	cursor: pointer;
+}
+
+</style>
+</head>
+<body>
+
+<form>
+	<div>
+		<input type="checkbox" id="display_auras" onclick="draw();"> Display Buffs <br>
+		<input type="checkbox" id="offset_actions" onclick="draw();" checked> Offset Simultaneous Actions <br>
+		<input type="checkbox" id="precast_crit" onclick="draw();"> Precast Crit <br>
+		<input type="checkbox" id="blaster_master" onclick="draw();" checked> Blaster Master <br>
+		<input type="checkbox" id="lucid_dreams" onclick="draw();"> Memory of Lucid Dreams <br>
+		<input type="checkbox" id="hyperthread_wristwraps" onclick="draw();"> Hyperthread Wristwraps <br>
+		<input id="haste" type="range" class="slider" min="0" max="2000" value="0" oninput="hastevalue.value = haste.value/10; draw();"/>
+		<output name="hastevalue" for="haste" >0</output>% Haste <br>
+		<input id="distance" type="range" class="slider" min="5" max="40" value="40" oninput="distancevalue.value = distance.value; draw();"/>
+		Range <output name="distancevalue" for="distance" >40</output><br>
+	</div>
+</form>
+
+<canvas id="myCanvas" width="1600" height="800" align="center" style="border:0px solid #FFFFFF;"></canvas>
+
+<script>
+
+class Action {
+	constructor( name, actor, cast_time, gcd, travel_time, cooldown, charges ) {
+		this.name = name;
+		this.actor = actor;
+		this.cast_time = cast_time;
+		this.gcd = gcd;
+		this.travel_time = travel_time;
+		this.cooldown = cooldown;
+		this.recharge_mod = 1;
+		this.max_charges = charges;
+		this.charges = charges;
+		this.cooldown_start = 0;
+		this.in_flight = 0;
+		if ( name == "fire_blast" || name == "combustion" ) {
+			this.usable_while_casting = true;
+		}
+		else {
+			this.usable_while_casting = false;
+		}
+		this.last_used = -9999;
+	}
+	ready() {
+		if ( this.actor.time < this.actor.next_idle && !this.usable_while_casting ) {
+			return false;
+		}
+		if ( this.name == "fire_blast" && this.actor.time - this.last_used < 0.5 ) {
+			return false;
+		}
+		if ( this.name == "rune_of_power" && this.actor.time - this.last_used < 10 ) {
+			return false;
+		}
+		if ( this.cooldown == 0 ) {
+			return true;
+		}
+		if ( this.charges < this.max_charges ) {
+			var new_charges = (this.actor.time - this.cooldown_start) / ( this.cooldown );
+			this.charges += new_charges;
+			this.charges = Math.min( this.charges, this.max_charges );
+			this.cooldown_start = this.actor.time;
+		}
+		return this.charges >= 1;
+	}
+	execute() {
+		var cast_time = this.cast_time;
+		if ( this.name == "pyroblast" && this.actor.auras["hot_streak"].check() ) {
+			this.actor.auras["hot_streak"].expire();
+			cast_time = 0;
+		}
+		if ( cast_time != 0 && this.name == "pyroblast" && this.actor.auras["heating_up"].check() && this.actor.time - this.actor.actions["scorch"].last_used - this.actor.actions["scorch"].cast_time <= this.actor.actions["scorch"].travel_time ) {
+			cast_time = this.actor.actions["scorch"].travel_time;
+		}
+		if ( this.max_charges == this.charges ) {
+			this.cooldown_start = this.actor.time;
+		}
+		this.charges -= 1;
+		if ( this.travel_time > 0 ) {
+			this.actor.events.push( [this.actor.time+cast_time, function(action) { action.in_flight += 1; }, this] );
+			this.actor.events.push( [this.actor.time+cast_time+this.travel_time, function(action) { action.in_flight -= 1; }, this] );
+		}
+		if ( this.name == "rune_of_power" ) {
+			this.actor.events.push( [this.actor.time+cast_time, function(actor) { actor.auras["rune_of_power"].apply() }, this.actor] );
+		}
+		if ( this.name == "combustion" ) {
+			this.actor.auras["combustion"].apply();
+		}
+		if ( this.name == "fire_blast" && this.actor.blaster_master_enabled ) {
+			this.actor.auras["blaster_master"].apply();
+		}
+		if ( this.name == "memory_of_lucid_dreams" ) {
+			this.actor.auras["memory_of_lucid_dreams"].apply();
+		}
+		if ( this.name == "pyroblast" || this.name == "scorch" || this.name == "fire_blast" ) {
+			if ( this.actor.precast_crit || this.actor.time > 0 ) {
+				var schedule_crit_time = this.actor.time + cast_time + this.travel_time;
+				if ( this.name == "fire_blast" && this.actor.actions["pyroblast"].last_used >= this.actor.time - this.actor.actions["scorch"].travel_time && this.actor.actions["pyroblast"].last_cast_time == this.actor.actions["scorch"].travel_time ) {
+					schedule_crit_time = this.actor.actions["pyroblast"].last_used + this.actor.actions["scorch"].travel_time + 0.05;
+				}
+				this.actor.schedule_crit( schedule_crit_time, this.name );
+			}
+		}
+		if ( this.name == "hyperthread_wristwraps" ) {
+			this.actor.actions["fire_blast"].charges += 10 / this.actor.actions["fire_blast"].cooldown;
+			this.actor.actions["fire_blast"].charges = Math.min( this.actor.actions["fire_blast"].charges, this.actor.actions["fire_blast"].max_charges );
+		}
+		this.last_used = this.actor.time;
+		if ( this.gcd > 0 ) {
+			this.actor.prev_gcd = this.name;
+		}
+		this.last_cast_time = cast_time;
+		return Math.max( this.actor.time+cast_time, this.actor.time+this.gcd );
+	}
+}
+
+class Aura {
+	constructor( name, actor, duration, max_stacks ) {
+		this.name = name;
+		this.actor = actor;
+		this.duration = duration;
+		this.max_stacks = max_stacks;
+		this.active = false;
+		this.stacks = 0;
+		this.start = 0;
+	}
+	apply() {
+		this.check();
+		this.start = this.actor.time;
+		this.active = true;
+		this.stacks += 1;
+		this.actor.aura_list.push( [this.name, this.stacks, this.actor.time] );
+		if ( this.name == "memory_of_lucid_dreams" ) {
+			this.actor.actions['fire_blast'].cooldown /= 2;
+		}
+	}
+	expire() {
+		this.active = false;
+		this.stacks = 0;
+		this.actor.aura_list.push( [this.name, this.stacks, this.actor.time] );
+		if ( this.name == "memory_of_lucid_dreams" ) {
+			this.actor.actions['fire_blast'].cooldown *= 2;
+		}	
+	}
+	check() {
+		if ( this.active && this.start + this.duration <= this.actor.time ) {
+			this.active = false;
+			this.stacks = 0;
+			this.actor.aura_list.push( [this.name, this.stacks, this.start + this.duration] );
+		}
+		return this.active;
+	}
+	remains() {
+		if ( !this.check() ) {
+			return 0;
+		}
+		return this.start + this.duration - this.actor.time;
+	}
+}
+
+class Mage {
+	constructor( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance ) {
+		this.blaster_master_enabled = blaster_master_enabled;
+		this.memory_of_lucid_dreams_enabled = memory_of_lucid_dreams_enabled;
+		this.hyperthread_wristwraps_enabled = hyperthread_wristwraps_enabled;
+		this.haste = haste;
+		this.precast_crit = precast_crit;
+		this.distance = distance;
+		this.gcd = Math.max( 1.5*1/(1+haste), 0.75 );
+		this.actions = {
+			"rune_of_power"          : new Action( "rune_of_power", this, 1.5*1/(1+haste), this.gcd, 0, 40, 2 ),
+			"fire_blast"             : new Action( "fire_blast", this, 0, 0, 0, 10*1/(1+haste), 3 ),
+			"pyroblast"              : new Action( "pyroblast", this, 4.5*1/(1+haste), this.gcd, Math.min(0.75, distance/35), 0, 1 ),
+			"meteor"                 : new Action( "meteor", this, 0, this.gcd, Math.max(3*1/(1+haste)-1, 0), 45, 1 ),
+			"scorch"                 : new Action( "scorch", this, 1.5*1/(1+haste), this.gcd, 0.015, 0, 1 ),
+			"combustion"             : new Action( "combustion", this, 0, 0, 0, 120, 1 ),
+			"hyperthread_wristwraps" : new Action( "hyperthread_wristwraps", this, 0, 0, 0, 120, 1 ),
+			"memory_of_lucid_dreams" : new Action( "memory_of_lucid_dreams", this, 0, this.gcd, 0, 120, 1 ),
+			"dragons_breath"         : new Action( "dragons_breath", this, 0, this.gcd, 0, 20, 1 )
+		}
+		this.auras = {
+			"combustion"             : new Aura( "combustion", this, 10,  1 ),
+			"rune_of_power"          : new Aura( "rune_of_power", this, 10, 1 ),
+			"blaster_master"         : new Aura( "blaster_master", this, 3, 3 ),
+			"heating_up"             : new Aura( "heating_up", this, 10, 1 ),
+			"hot_streak"             : new Aura( "hot_streak", this, 15, 1 ),
+			"memory_of_lucid_dreams" : new Aura( "memory_of_lucid_dreams", this, 15, 1 )
+		}
+		this.time = 0;
+		this.next_idle = 0;
+		this.aura_list = [];
+		this.events = [];
+	}
+
+	schedule_crit( time, action ) {
+		this.events.push( [ time, function( args ) {
+			var actor = args[0];
+			var action = args[1];
+			if ( actor.auras["heating_up"].check() ) {
+				actor.auras["heating_up"].expire();
+				if ( action != "scorch" || actor.actions["pyroblast"].last_cast_time != actor.actions["scorch"].travel_time ) { // Heating Up was already "converted" to a Hot Streak by Scorch
+					actor.auras["hot_streak"].apply();
+				}
+			}
+			else if ( !actor.auras["hot_streak"].check() ) {
+				actor.auras["heating_up"].apply();
+			}
+		}, [this, action] ]);
+	}
+
+	check_action(action, condition = true) {
+		if ( !this.current_action ) {
+			var a = this.actions[action];
+			if ( a.ready() && condition ) {
+				this.next_idle = Math.max( this.next_idle, a.execute() );
+				this.current_action = [a.name, this.time, this.time+a.last_cast_time];
+			}
+		}
+	}
+
+	get_action() {
+		this.current_action = false;
+		while ( this.time < 30 ) {
+			for ( var e = this.events.length-1; e >= 0; e-- ) {
+				if ( this.time >= this.events[e][0] ) {
+					this.events[e][1]( this.events[e][2] );
+					this.events.splice(e, 1);
+				}
+			}
+			for ( var a in this.auras ) {
+				this.auras[a].check();
+			}
+
+			this.check_action( "pyroblast", this.time == 0 );
+			this.check_action( "memory_of_lucid_dreams", this.memory_of_lucid_dreams_enabled );
+			this.check_action( "fire_blast", this.actions["fire_blast"].charges == this.actions["fire_blast"].max_charges && !( this.prev_gcd=="pyroblast" && this.next_idle>this.time ) && !this.actions["pyroblast"].in_flight && this.memory_of_lucid_dreams_enabled );
+			this.check_action( "fire_blast", this.blaster_master_enabled&&!this.auras["blaster_master"].check()&&this.prev_gcd=="rune_of_power"&&this.actions["rune_of_power"].cast_time-this.time+this.actions["rune_of_power"].last_used<0.6&&!this.actions["pyroblast"].in_flight );
+			this.check_action( "rune_of_power", !this.auras["combustion"].check() );
+			this.check_action( "meteor", this.auras["rune_of_power"].check() );
+			this.check_action( "combustion", this.actions["meteor"].in_flight && this.actions["meteor"].travel_time - (this.time - this.actions["meteor"].last_used) <= 0.5 || this.actions["meteor"].travel_time==0 && this.prev_gcd == "meteor" );
+			this.check_action( "fire_blast", ((this.actions["fire_blast"].charges+(this.auras["combustion"].remains()-this.auras["blaster_master"].duration)/this.actions["fire_blast"].cooldown-this.auras["combustion"].remains()/(this.auras["blaster_master"].duration-0.5)>=0)||!this.blaster_master_enabled||this.auras["combustion"].remains()<=this.auras["blaster_master"].duration||this.auras["blaster_master"].remains()<0.5||this.hyperthread_wristwraps_enabled&&this.actions["hyperthread_wristwraps"].charges>=1) && this.auras["combustion"].check()&&(!(this.prev_gcd=="scorch"&&this.next_idle>this.time)&&!this.actions["pyroblast"].in_flight&&this.auras["heating_up"].check()||this.prev_gcd=="scorch"&&this.next_idle>this.time&&!this.auras["hot_streak"].check()&&(!this.auras["heating_up"].check()||this.blaster_master_enabled)||this.actions["scorch"].in_flight==0&&this.actions["pyroblast"].in_flight&&!this.auras["heating_up"].check()&&!this.auras["hot_streak"].check()) );
+			this.check_action( "hyperthread_wristwraps", this.hyperthread_wristwraps_enabled&&this.auras["combustion"].check()&&this.actions["fire_blast"].charges<1&&(1-this.actions["fire_blast"].charges)*this.actions["fire_blast"].cooldown>this.gcd );
+			this.check_action( "pyroblast", this.auras["hot_streak"].check() || this.prev_gcd == "scorch" && this.auras["heating_up"].check() );
+			this.check_action( "dragons_breath", this.auras["combustion"].check() && this.auras["combustion"].remains()<this.gcd );
+			this.check_action( "scorch" );
+
+			if ( this.current_action ) {
+				return this.current_action;
+			}
+
+			this.time = Math.min( this.time + 0.01, this.next_idle );
+		}
+	}
+
+	get_auras() {
+		this.time = 9999;
+		for ( var a in this.auras ) {
+			this.auras[a].check();
+		}		
+		return this.aura_list;
+	}
+
+	get_time() {
+		return this.time;
+	}
+
+	combustion_done() {
+		return !this.actions["combustion"].ready() && !this.auras["combustion"].check();
+	}
+}
+
+function get_actions() {
+	var count = 0;
+	var haste = document.getElementById( "haste" ).value/1000;
+	var distance = document.getElementById( "distance" ).value;
+	var precast_crit = document.getElementById( "precast_crit" ).checked;
+	var blaster_master_enabled = document.getElementById( "blaster_master" ).checked;
+	var memory_of_lucid_dreams_enabled = document.getElementById( "lucid_dreams" ).checked;
+	var hyperthread_wristwraps_enabled = document.getElementById( "hyperthread_wristwraps" ).checked;
+	var mage = new Mage( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance );
+	var actions = [];
+	var auras = [];
+	while ( mage.get_time()<total_seconds && count<200 && !mage.combustion_done() ) {
+		var action = mage.get_action();
+		if ( !mage.combustion_done() ) {
+			actions.push( action );
+		}
+		count += 1;
+	}
+	var auras = mage.get_auras();
+	return [actions, auras];
+}
+
+var start_time = new Date().getTime()
+
+var total_seconds = 20;
+var x_margin = 40;
+var timeline_lw = 2;
+var timeline_offset_y = 60;
+var timeline_tick_size = 10;
+var icon_size = 40;
+
+var icons = {
+	"rune_of_power"          : "https://wow.zamimg.com/images/wow/icons/large/spell_mage_runeofpower.jpg",
+	"fire_blast"             : "https://wow.zamimg.com/images/wow/icons/large/spell_fire_fireball.jpg",
+	"blaster_master"         : "https://wow.zamimg.com/images/wow/icons/large/spell_fire_fireball.jpg",
+	"pyroblast"              : "https://wow.zamimg.com/images/wow/icons/large/spell_fire_fireball02.jpg",
+	"meteor"                 : "https://wow.zamimg.com/images/wow/icons/large/spell_mage_meteor.jpg",
+	"scorch"                 : "https://wow.zamimg.com/images/wow/icons/large/spell_fire_soulburn.jpg",
+	"combustion"             : "https://wow.zamimg.com/images/wow/icons/large/spell_fire_sealoffire.jpg",
+	"hyperthread_wristwraps" : "https://wow.zamimg.com/images/wow/icons/large/inv_tailoring_815_synchronousthread.jpg",
+	"memory_of_lucid_dreams" : "https://wow.zamimg.com/images/wow/icons/large/spell_azerite_essence05.jpg",
+	"dragons_breath"         : "https://wow.zamimg.com/images/wow/icons/large/inv_misc_head_dragon_01.jpg",
+	"heating_up"             : "https://wow.zamimg.com/images/wow/icons/large/ability_mage_hotstreak.jpg",
+	"hot_streak"             : "https://wow.zamimg.com/images/wow/icons/large/ability_ironmaidens_grapeshotblast.jpg"
+};
+
+var cast_colors = {
+	"rune_of_power"          : "#8FF2FF",
+	"pyroblast"              : "#EB4561",
+	"scorch"                 : "#EB4561",
+	"blaster_master"         : "#EB4561",
+	"combustion"             : "#EB4561",
+	"memory_of_lucid_dreams" : "#4f99bd",
+	"heating_up"             : "#EB4561",
+	"hot_streak"             : "#EB4561"
+}
+
+var images = {};
+for ( var key in icons ) {
+	images[key] = new Image;
+	images[key].src = icons[key];
+}
+
+var canvas = document.getElementById( "myCanvas" );
+var ctx = canvas.getContext( "2d" );
+
+function time_to_x( seconds ) {
+	return x_margin + (canvas.width-2*x_margin)/total_seconds * seconds;
+}
+
+function draw_timeline() {
+	ctx.beginPath();
+	ctx.fillStyle = "#FFFFFF";
+	ctx.strokeStyle = "#FFFFFF";
+	ctx.lineWidth = timeline_lw;
+	ctx.moveTo( time_to_x( 0 ), timeline_offset_y );
+	ctx.lineTo( time_to_x( total_seconds ), timeline_offset_y );
+	ctx.moveTo( time_to_x( 0 ), timeline_offset_y + timeline_lw + 3*icon_size );
+	ctx.lineTo( time_to_x( total_seconds ), timeline_offset_y + timeline_lw + 3*icon_size );
+	ctx.font = "30px Arial";
+	ctx.textAlign = "center";
+	for ( i = 0; i <= total_seconds; i++ ) {
+		var x = time_to_x( i );
+		ctx.fillText( i, x, timeline_offset_y - timeline_tick_size - 5 );
+		ctx.moveTo( x, timeline_offset_y - timeline_tick_size );
+		ctx.lineTo( x, timeline_offset_y );
+	}
+	ctx.stroke();
+}
+
+function add_image( spell, x, y ) {
+	ctx.drawImage( images[spell], x, y, icon_size, icon_size );
+}
+
+function draw_actions() {
+	// Draw Actions
+	var values = get_actions();
+	var actions = values[0];
+	var auras = values[1];
+	var prev_x = -1;
+	var offset_x = 0;
+	var prev_offset_x = 0;
+	var offset_actions = document.getElementById( "offset_actions" ).checked;
+	for ( i = 0; i<actions.length; i++ ) {
+		var y = timeline_offset_y + timeline_lw/2;
+		var x = time_to_x( actions[i][1] );
+		if ( x - prev_x < 5 && offset_actions ) {
+			offset_x += 5;
+		}
+		else {
+			offset_x = 0;
+		}
+		x += offset_x;
+		if ( actions[i][0] == "fire_blast") {
+			y = timeline_offset_y + timeline_lw/2 + icon_size;
+		}
+		if ( actions[i][0] == "combustion" || actions[i][0] == "hyperthread_wristwraps" ) {
+			y = timeline_offset_y + timeline_lw/2 + 2*icon_size;
+		}
+		if ( actions[i][2] > actions[i][1] ) {
+			ctx.fillStyle = cast_colors[actions[i][0]];
+			ctx.fillRect( x, y, time_to_x( actions[i][2] ) - x, icon_size );
+		}
+		add_image( actions[i][0], x, y );
+		prev_x = x;
+		prev_offset_x = offset_x;
+	}
+
+	// Draw Auras
+	var display_auras = document.getElementById( "display_auras" ).checked;
+	if ( display_auras ) {
+		var next_aura_y = 4*icon_size + timeline_offset_y + timeline_lw;
+		var aura_y = {};
+		for ( i = 0; i<auras.length; i++ ) {
+			var name = auras[i][0];
+			var stacks = auras[i][1];
+			var time = auras[i][2];
+			if ( stacks == 1 && ( name == "rune_of_power" || name == "combustion" || name == "blaster_master" || name == "memory_of_lucid_dreams" ) ) {
+				for ( j = i+1; j<auras.length; j++ ) {
+					if ( name == auras[j][0] && auras[j][1] == 0 || j == auras.length-1 ) {
+						var x_end;
+						if ( name == auras[j][0] && auras[j][1] == 0 ) {
+							x_end = time_to_x( auras[j][2] ) - time_to_x( time );
+						}
+						else {
+							x_end = time_to_x( total_seconds ) - time_to_x( time );
+						}
+						var y;
+						if ( name in aura_y ) {
+							y = aura_y[name];
+						}
+						else {
+							y = next_aura_y;
+							next_aura_y += icon_size+2;
+							aura_y[name] = y;
+						}
+						ctx.fillStyle = cast_colors[name];
+						ctx.fillRect( time_to_x( time ), y, x_end, icon_size );
+						add_image(name, time_to_x(time), y);
+						break;
+					}
+				}
+			}
+		}
+	}
+}
+
+function draw() {
+	ctx.clearRect( 0, 0, canvas.width, canvas.height );
+	draw_timeline();
+	draw_actions();
+}
+
+window.onload = function(){
+	draw();
+};
+
+setTimeout(function() { draw(); }, 500);
+</script>
+</body>
+</html>
