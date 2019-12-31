@@ -281,7 +281,7 @@ class Mage {
 			this.check_action( "fire_blast", ((this.actions["fire_blast"].charges+(this.auras["combustion"].remains()-this.auras["blaster_master"].duration)/this.actions["fire_blast"].cooldown-this.auras["combustion"].remains()/(this.auras["blaster_master"].duration-0.5)>=0)||!this.blaster_master_enabled||this.auras["combustion"].remains()<=this.auras["blaster_master"].duration||this.auras["blaster_master"].remains()<0.5||this.hyperthread_wristwraps_enabled&&this.actions["hyperthread_wristwraps"].charges>=1) && this.auras["combustion"].check()&&(!(this.prev_gcd=="scorch"&&this.next_idle>this.time)&&!this.actions["pyroblast"].in_flight&&this.auras["heating_up"].check()||this.prev_gcd=="scorch"&&this.next_idle>this.time&&!this.auras["hot_streak"].check()&&(!this.auras["heating_up"].check()||this.blaster_master_enabled)||this.actions["scorch"].in_flight==0&&this.actions["pyroblast"].in_flight&&!this.auras["heating_up"].check()&&!this.auras["hot_streak"].check()) );
 			this.check_action( "hyperthread_wristwraps", this.hyperthread_wristwraps_enabled&&this.auras["combustion"].check()&&this.actions["fire_blast"].charges<1&&(1-this.actions["fire_blast"].charges)*this.actions["fire_blast"].cooldown>this.gcd );
 			this.check_action( "pyroblast", this.auras["hot_streak"].check() || this.prev_gcd == "scorch" && this.auras["heating_up"].check() );
-			this.check_action( "dragons_breath", this.auras["combustion"].check() && this.auras["combustion"].remains()<this.gcd );
+			//this.check_action( "dragons_breath", this.auras["combustion"].check() && this.auras["combustion"].remains()<this.gcd );
 			this.check_action( "scorch" );
 
 			if ( this.current_action ) {
