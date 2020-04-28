@@ -52,6 +52,8 @@ body {
 		<input type="checkbox" id="hyperthread_wristwraps" onclick="draw();"> Hyperthread Wristwraps <br>
 		<input id="haste" type="range" class="slider" min="0" max="2000" value="0" oninput="hastevalue.value = haste.value/10; draw();"/>
 		<output name="hastevalue" for="haste" >0</output>% Haste <br>
+		<input id="combustion_delay" type="range" class="slider" min="50" max="2000" value="500" oninput="combustion_delay_value.value = combustion_delay.value; draw();"/>
+		Use Combustion less than <output name="combustion_delay_value" for="combustion_delay" >500</output> ms before Meteor snapshots<br>
 		<input id="distance" type="range" class="slider" min="5" max="40" value="40" oninput="distancevalue.value = distance.value; draw();"/>
 		Range <output name="distancevalue" for="distance" >40</output><br>
 	</div>
@@ -199,13 +201,14 @@ class Aura {
 }
 
 class Mage {
-	constructor( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance ) {
+	constructor( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance, combustion_delay ) {
 		this.blaster_master_enabled = blaster_master_enabled;
 		this.memory_of_lucid_dreams_enabled = memory_of_lucid_dreams_enabled;
 		this.hyperthread_wristwraps_enabled = hyperthread_wristwraps_enabled;
 		this.haste = haste;
 		this.precast_crit = precast_crit;
 		this.distance = distance;
+		this.combustion_delay = combustion_delay;
 		this.gcd = Math.max( 1.5*1/(1+haste), 0.75 );
 		this.actions = {
 			"rune_of_power"          : new Action( "rune_of_power", this, 1.5*1/(1+haste), this.gcd, 0, 40, 2 ),
@@ -277,7 +280,7 @@ class Mage {
 			this.check_action( "fire_blast", this.blaster_master_enabled&&!this.auras["blaster_master"].check()&&this.prev_gcd=="rune_of_power"&&this.actions["rune_of_power"].cast_time-this.time+this.actions["rune_of_power"].last_used<0.6&&!this.actions["pyroblast"].in_flight );
 			this.check_action( "rune_of_power", !this.auras["combustion"].check() );
 			this.check_action( "meteor", this.auras["rune_of_power"].check() );
-			this.check_action( "combustion", this.actions["meteor"].in_flight && this.actions["meteor"].travel_time - (this.time - this.actions["meteor"].last_used) <= 0.5 || this.actions["meteor"].travel_time==0 && this.prev_gcd == "meteor" );
+			this.check_action( "combustion", this.actions["meteor"].in_flight && this.actions["meteor"].travel_time - (this.time - this.actions["meteor"].last_used) <= this.combustion_delay || this.actions["meteor"].travel_time==0 && this.prev_gcd == "meteor" );
 			this.check_action( "fire_blast", ((this.actions["fire_blast"].charges+(this.auras["combustion"].remains()-this.auras["blaster_master"].duration)/this.actions["fire_blast"].cooldown-this.auras["combustion"].remains()/(this.auras["blaster_master"].duration-0.5)>=0)||!this.blaster_master_enabled||this.auras["combustion"].remains()<=this.auras["blaster_master"].duration||this.auras["blaster_master"].remains()<0.5||this.hyperthread_wristwraps_enabled&&this.actions["hyperthread_wristwraps"].charges>=1) && this.auras["combustion"].check()&&(!(this.prev_gcd=="scorch"&&this.next_idle>this.time)&&!this.actions["pyroblast"].in_flight&&this.auras["heating_up"].check()||this.prev_gcd=="scorch"&&this.next_idle>this.time&&!this.auras["hot_streak"].check()&&(!this.auras["heating_up"].check()||this.blaster_master_enabled)||this.actions["scorch"].in_flight==0&&this.actions["pyroblast"].in_flight&&!this.auras["heating_up"].check()&&!this.auras["hot_streak"].check()) );
 			this.check_action( "hyperthread_wristwraps", this.hyperthread_wristwraps_enabled&&this.auras["combustion"].check()&&this.actions["fire_blast"].charges<1&&(1-this.actions["fire_blast"].charges)*this.actions["fire_blast"].cooldown>this.gcd );
 			this.check_action( "pyroblast", this.auras["hot_streak"].check() || this.prev_gcd == "scorch" && this.auras["heating_up"].check() );
@@ -317,7 +320,8 @@ function get_actions() {
 	var blaster_master_enabled = document.getElementById( "blaster_master" ).checked;
 	var memory_of_lucid_dreams_enabled = document.getElementById( "lucid_dreams" ).checked;
 	var hyperthread_wristwraps_enabled = document.getElementById( "hyperthread_wristwraps" ).checked;
-	var mage = new Mage( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance );
+	var combustion_delay = document.getElementById( "combustion_delay" ).value/1000;
+	var mage = new Mage( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance, combustion_delay );
 	var actions = [];
 	var auras = [];
 	while ( mage.get_time()<total_seconds && count<200 && !mage.combustion_done() ) {
