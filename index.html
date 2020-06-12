@@ -47,6 +47,7 @@ body {
 		<input type="checkbox" id="display_auras" onclick="draw();"> Display Buffs <br>
 		<input type="checkbox" id="offset_actions" onclick="draw();" checked> Offset Simultaneous Actions <br>
 		<input type="checkbox" id="precast_crit" onclick="draw();"> Precast Crit <br>
+		<input type="checkbox" id="meteor_enabled" onclick="draw();" checked> Meteor <br>
 		<input type="checkbox" id="blaster_master" onclick="draw();" checked> Blaster Master <br>
 		<input type="checkbox" id="lucid_dreams" onclick="draw();"> Memory of Lucid Dreams <br>
 		<input type="checkbox" id="hyperthread_wristwraps" onclick="draw();"> Hyperthread Wristwraps <br>
@@ -106,6 +107,10 @@ class Action {
 			this.cooldown_start = this.actor.time;
 		}
 		return this.charges >= 1;
+	}
+	execute_remains() {
+		var remaining_time = ( this.last_used + this.last_cast_time ) - this.actor.time;
+		return Math.max(remaining_time, 0)
 	}
 	execute() {
 		var cast_time = this.cast_time;
@@ -203,7 +208,8 @@ class Aura {
 }
 
 class Mage {
-	constructor( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance, combustion_delay, bm_delay ) {
+	constructor( haste, meteor_enabled, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance, combustion_delay, bm_delay ) {
+		this.meteor_enabled = meteor_enabled;
 		this.blaster_master_enabled = blaster_master_enabled;
 		this.memory_of_lucid_dreams_enabled = memory_of_lucid_dreams_enabled;
 		this.hyperthread_wristwraps_enabled = hyperthread_wristwraps_enabled;
@@ -282,8 +288,8 @@ class Mage {
 			this.check_action( "fire_blast", this.actions["fire_blast"].charges == this.actions["fire_blast"].max_charges && !( this.prev_gcd=="pyroblast" && this.next_idle>this.time ) && !this.actions["pyroblast"].in_flight && this.memory_of_lucid_dreams_enabled );
 			this.check_action( "fire_blast", this.blaster_master_enabled&&!this.auras["blaster_master"].check()&&this.prev_gcd=="rune_of_power"&&this.actions["rune_of_power"].cast_time-this.time+this.actions["rune_of_power"].last_used<0.6&&!this.actions["pyroblast"].in_flight );
 			this.check_action( "rune_of_power", !this.auras["combustion"].check() );
-			this.check_action( "meteor", this.auras["rune_of_power"].check() );
-			this.check_action( "combustion", this.actions["meteor"].in_flight && this.actions["meteor"].travel_time - (this.time - this.actions["meteor"].last_used) <= this.combustion_delay || this.actions["meteor"].travel_time==0 && this.prev_gcd == "meteor" );
+			this.check_action( "meteor", this.auras["rune_of_power"].check() && this.meteor_enabled );
+			this.check_action( "combustion", this.actions["meteor"].in_flight && this.actions["meteor"].travel_time - (this.time - this.actions["meteor"].last_used) <= this.combustion_delay || this.actions["meteor"].travel_time==0 && this.prev_gcd == "meteor" || !this.meteor_enabled && this.auras["rune_of_power"].check() && ( this.memory_of_lucid_dreams_enabled || this.auras["hot_streak"].check() || this.actions["scorch"].execute_remains() > 0 && this.actions.scorch.execute_remains() < 0.5 ) );
 			this.check_action( "fire_blast", ((this.actions["fire_blast"].charges+(this.auras["combustion"].remains()-this.auras["blaster_master"].duration)/this.actions["fire_blast"].cooldown-this.auras["combustion"].remains()/(this.auras["blaster_master"].duration-this.bm_delay)>=0)||!this.blaster_master_enabled||this.auras["combustion"].remains()<=this.auras["blaster_master"].duration||this.auras["blaster_master"].remains()<this.bm_delay||this.hyperthread_wristwraps_enabled&&this.actions["hyperthread_wristwraps"].charges>=1) && this.auras["combustion"].check()&&(!(this.prev_gcd=="scorch"&&this.next_idle>this.time)&&!this.actions["pyroblast"].in_flight&&this.auras["heating_up"].check()||this.prev_gcd=="scorch"&&this.next_idle>this.time&&!this.auras["hot_streak"].check()&&(!this.auras["heating_up"].check()||this.blaster_master_enabled)||this.actions["scorch"].in_flight==0&&this.actions["pyroblast"].in_flight&&!this.auras["heating_up"].check()&&!this.auras["hot_streak"].check()) );
 			this.check_action( "hyperthread_wristwraps", this.hyperthread_wristwraps_enabled&&this.auras["combustion"].check()&&this.actions["fire_blast"].charges<1&&(1-this.actions["fire_blast"].charges)*this.actions["fire_blast"].cooldown>this.gcd );
 			this.check_action( "pyroblast", this.auras["hot_streak"].check() || this.prev_gcd == "scorch" && this.auras["heating_up"].check() );
@@ -318,6 +324,7 @@ class Mage {
 function get_actions() {
 	var count = 0;
 	var haste = document.getElementById( "haste" ).value/1000;
+	var meteor_enabled = document.getElementById( "meteor_enabled" ).checked;
 	var distance = document.getElementById( "distance" ).value;
 	var precast_crit = document.getElementById( "precast_crit" ).checked;
 	var blaster_master_enabled = document.getElementById( "blaster_master" ).checked;
@@ -325,7 +332,7 @@ function get_actions() {
 	var hyperthread_wristwraps_enabled = document.getElementById( "hyperthread_wristwraps" ).checked;
 	var combustion_delay = document.getElementById( "combustion_delay" ).value/1000;
 	var bm_delay = document.getElementById( "bm_delay" ).value/1000;
-	var mage = new Mage( haste, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance, combustion_delay, bm_delay );
+	var mage = new Mage( haste, meteor_enabled, blaster_master_enabled, memory_of_lucid_dreams_enabled, hyperthread_wristwraps_enabled, precast_crit, distance, combustion_delay, bm_delay );
 	var actions = [];
 	var auras = [];
 	while ( mage.get_time()<total_seconds && count<200 && !mage.combustion_done() ) {
